@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Capability, CapabilityConfig } from "./security/capabilities.js";
@@ -10,8 +9,12 @@ import type { ToolPackReport } from "./workflows/tool-packs.js";
 
 export const SUPPORTED_HOST_PLATFORMS = ["darwin", "win32"] as const;
 const ALL_CAPABILITIES: Capability[] = ["inspect", "edit", "export", "filesystem", "unsafe-script"];
-const require = createRequire(import.meta.url);
-const adobeUxpCoverage: unknown = require("./resources/adobe-uxp-coverage.json");
+// A literal-specifier JSON import (rather than createRequire) so that bundlers
+// such as esbuild inline the manifest; tsc with module Node16 accepts import
+// attributes only on dynamic imports, hence the top-level await.
+const adobeUxpCoverage: unknown = (
+  await import("./resources/adobe-uxp-coverage.json", { with: { type: "json" } })
+).default;
 
 export type SupportedHostPlatform = (typeof SUPPORTED_HOST_PLATFORMS)[number];
 export type AdobeUxpCoverageAvailability = "current" | "planned";

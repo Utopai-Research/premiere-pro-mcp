@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -8,11 +8,11 @@ describe("CEP installation metadata", () => {
   it("keeps the CEP bundle and extension versions aligned with package.json", () => {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     const manifest = readFileSync(join(root, "cep-plugin", "CSXS", "manifest.xml"), "utf8");
-    const updater = readFileSync(join(root, "cep-plugin", "updater.cjs"), "utf8");
+    const panel = readFileSync(join(root, "cep-plugin", "index.html"), "utf8");
 
     expect(manifest).toContain(`ExtensionBundleVersion="${pkg.version}"`);
     expect(manifest.match(new RegExp(`Version="${pkg.version.replaceAll(".", "\\.")}"`, "g"))).toHaveLength(3);
-    expect(updater).toContain(`CURRENT_VERSION = "${pkg.version}"`);
+    expect(panel).toContain(`Version ${pkg.version}`);
   });
 
   it("declares Premiere compatibility with a Marketplace-safe minimum only", () => {
@@ -63,22 +63,23 @@ describe("CEP installation metadata", () => {
     expect(workflow).toContain("signed-cep");
   });
 
-  it("publishes connector updates and exposes the updater in the panel", () => {
+  it("publishes the connector on release and keeps the panel offline", () => {
     const workflow = readFileSync(join(root, ".github", "workflows", "cep-release.yml"), "utf8");
     const panel = readFileSync(join(root, "cep-plugin", "index.html"), "utf8");
     const panelLogic = readFileSync(join(root, "cep-plugin", "main.js"), "utf8");
 
     expect(workflow).toContain("release:");
     expect(workflow).toContain("artifacts/MCPBridgeCEP.zxp");
-    expect(panel).toContain('src="updater.cjs"');
-    expect(panel).toContain("MCP updates");
-    expect(panel).toContain('aria-describedby="updateDetail"');
-    expect(panelLogic).toContain("Update after quit");
-    expect(panelLogic).toContain("scheduleWindowsGlobalUpdate");
-    expect(panelLogic).toContain("window.confirm");
-    expect(panelLogic).toContain("getPerUserGlobalInstall");
-    expect(panelLogic).toContain("LATEST_PACKAGE_API");
-    expect(panelLogic).toContain("This panel will not modify a source checkout.");
+    expect(workflow).toContain("artifacts/MCPBridgeCEP.zxp.sha256");
+    expect(workflow).toContain("ZXP_CERT_P12_BASE64");
+    // The panel makes no network calls: no npm/GitHub update check, no self-updater.
+    expect(existsSync(join(root, "cep-plugin", "updater.cjs"))).toBe(false);
+    expect(existsSync(join(root, "cep-plugin", ".debug"))).toBe(false);
+    expect(panel).not.toContain("updater.cjs");
+    expect(panelLogic).not.toContain('nodeRequire("https")');
+    expect(panelLogic).not.toContain('nodeRequire("http")');
+    expect(panelLogic).not.toContain("registry.npmjs.org");
+    expect(panelLogic).not.toContain("checkForUpdates");
     expect(panelLogic).toContain("writeResponseFile(resFilePath, response)");
     expect(panelLogic).toContain("fs.renameSync(stagedPath, filePath)");
     expect(panelLogic).toContain('"bridge-heartbeat.json"');

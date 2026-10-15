@@ -110,12 +110,20 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+declare const __PREMIERE_MCP_VERSION__: string | undefined;
+
 /**
  * Read the version from package.json rather than hardcoding it. A literal here
  * silently drifts from the published package every release, which makes the
  * version reported over MCP useless for triaging bug reports.
  */
 export const SERVER_VERSION = ((): string => {
+  // Single-file builds (scripts/build-single-file.mjs) have no package.json next
+  // to them; they define this identifier at bundle time. The tsc build leaves it
+  // undeclared, so `typeof` is "undefined" and the package.json read below runs.
+  if (typeof __PREMIERE_MCP_VERSION__ === "string" && __PREMIERE_MCP_VERSION__) {
+    return __PREMIERE_MCP_VERSION__;
+  }
   try {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const raw = readFileSync(path.resolve(here, "../package.json"), "utf8");

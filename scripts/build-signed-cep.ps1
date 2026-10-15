@@ -44,10 +44,20 @@ try {
     }
   }
 
+  # Sign a staged copy so a local CEF remote-debug file (.debug) can never be
+  # packaged: it would open a debugging port in every user's Premiere.
+  $stagedPlugin = Join-Path $temporaryRoot "cep-plugin"
+  Copy-Item -LiteralPath $pluginSource -Destination $stagedPlugin -Recurse -Force
+  $stagedDebug = Join-Path $stagedPlugin ".debug"
+  if (Test-Path -LiteralPath $stagedDebug) {
+    Write-Warning "Excluding cep-plugin/.debug from the signed package."
+    Remove-Item -LiteralPath $stagedDebug -Force
+  }
+
   if (Test-Path -LiteralPath $OutputPath) {
     Remove-Item -LiteralPath $OutputPath -Force
   }
-  & $ZxpSignCmdPath -sign $pluginSource $OutputPath $CertificatePath $CertificatePassword
+  & $ZxpSignCmdPath -sign $stagedPlugin $OutputPath $CertificatePath $CertificatePassword
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutputPath)) {
     throw "ZXPSignCmd failed to create $OutputPath"
   }

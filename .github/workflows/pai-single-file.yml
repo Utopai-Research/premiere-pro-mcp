@@ -1,0 +1,172 @@
+name: PAI single-file server
+
+# Builds dist-single/premiere-pro-mcp.mjs (one ES module, no node_modules needed)
+# and attaches it plus its SHA-256 to the GitHub release for a pai-* tag.
+# See PAI.md.
+
+on:
+  push:
+    tags: ["pai-*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing pai-* tag to build and (re)publish; leave empty to build only and keep the file as a workflow artifact
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pai-single-file-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  single-file:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - name: Validate tag
+        if: ${{ env.RELEASE_TAG != '' }}
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^pai-[A-Za-z0-9._-]+$ ]]; then
+            echo "Tag must match pai-<name>; received: $RELEASE_TAG"
+            exit 1
+          fi
+      # Same pinned action commits as the upstream workflows in this repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG != '' && format('refs/tags/{0}', env.RELEASE_TAG) || github.ref }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      # The lock file is untouched: esbuild is installed for this job only, at an
+      # exact version, so `npm ci` keeps working in every upstream workflow.
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund esbuild@0.25.5
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Build single-file server
+        run: npm run build:single
+      - name: Verify checksum file
+        working-directory: dist-single
+        run: sha256sum -c premiere-pro-mcp.mjs.sha256
+      # The full vitest suite (300+ files) already runs on Windows and macOS in
+      # cross-platform.yml; this job only proves the bundle itself is sound.
+      - name: Smoke test outside the repository (no node_modules reachable)
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/pai-smoke"
+          mkdir -p "$smoke"
+          cp dist-single/premiere-pro-mcp.mjs "$smoke/"
+          expected="$(node -p "require('./package.json').version")"
+          actual="$(cd "$smoke" && node premiere-pro-mcp.mjs --version)"
+          echo "--version: $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "Expected version $expected"
+            exit 1
+          fi
+          cd "$smoke"
+          EXPECTED_VERSION="$expected" PREMIERE_TEMP_DIR="$smoke/bridge" node --input-type=module -e '
+            import { spawn } from "node:child_process";
+            const child = spawn(process.execPath, ["premiere-pro-mcp.mjs"], {
+              stdio: ["pipe", "pipe", "inherit"],
+              env: { ...process.env, POSTHOG_API_KEY: "must-be-ignored" },
+            });
+            const timer = setTimeout(() => { console.error("No initialize response within 20 s"); child.kill(); process.exit(1); }, 20_000);
+            let buffer = "";
+            child.stdout.setEncoding("utf8");
+            child.stdout.on("data", (chunk) => {
+              buffer += chunk;
+              for (const line of buffer.split("\n").slice(0, -1)) {
+                let message;
+                try { message = JSON.parse(line); } catch { continue; }
+                if (message.id !== 1) continue;
+                clearTimeout(timer);
+                const info = message.result && message.result.serverInfo;
+                console.log("initialize ->", JSON.stringify(info));
+                child.stdin.end();
+                child.kill();
+                if (!info || info.version !== process.env.EXPECTED_VERSION) {
+                  console.error("Unexpected initialize response:", line);
+                  process.exit(1);
+                }
+                process.exit(0);
+              }
+              buffer = buffer.slice(buffer.lastIndexOf("\n") + 1);
+            });
+            child.stdin.write(JSON.stringify({
+              jsonrpc: "2.0", id: 1, method: "initialize",
+              params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "pai-smoke", version: "0" } },
+            }) + "\n");
+          '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: premiere-pro-mcp-single-file
+          path: |
+            dist-single/premiere-pro-mcp.mjs
+            dist-single/premiere-pro-mcp.mjs.sha256
+          if-no-files-found: error
+      - name: Create or update the release
+        if: ${{ env.RELEASE_TAG != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "$RELEASE_TAG" \
+              --notes "Single-file MCP stdio server for PAI Desktop (see PAI.md). Verify premiere-pro-mcp.mjs against premiere-pro-mcp.mjs.sha256."
+          fi
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist-single/premiere-pro-mcp.mjs \
+            dist-single/premiere-pro-mcp.mjs.sha256
+
+  # The hardened panel, signed, attached to the same release. A release created
+  # with GITHUB_TOKEN does not trigger cep-release.yml, so it is built here too.
+  connector:
+    needs: single-file
+    if: ${{ github.event_name == 'push' || inputs.tag != '' }}
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ format('refs/tags/{0}', env.RELEASE_TAG) }}
+      - name: Build and verify signed connector
+        shell: pwsh
+        env:
+          ZXP_CERT_P12_BASE64: ${{ secrets.ZXP_CERT_P12_BASE64 }}
+          ZXP_CERT_PASSWORD: ${{ secrets.ZXP_CERT_PASSWORD }}
+        run: |
+          $params = @{}
+          if ($env:ZXP_CERT_P12_BASE64) {
+            if (-not $env:ZXP_CERT_PASSWORD) { throw "ZXP_CERT_P12_BASE64 is set but ZXP_CERT_PASSWORD is not." }
+            $certificatePath = Join-Path $env:RUNNER_TEMP "zxp-signing.p12"
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:ZXP_CERT_P12_BASE64))
+            $params.CertificatePath = $certificatePath
+            $params.CertificatePassword = $env:ZXP_CERT_PASSWORD
+            Write-Host "Signing the connector with the repository certificate."
+          } else {
+            Write-Host "::warning title=Unstable ZXP signer::ZXP_CERT_P12_BASE64 / ZXP_CERT_PASSWORD are not set; signing with a throwaway self-signed certificate generated for this build."
+          }
+          try { ./scripts/build-signed-cep.ps1 @params }
+          finally { if ($params.CertificatePath -and (Test-Path -LiteralPath $params.CertificatePath)) { Remove-Item -LiteralPath $params.CertificatePath -Force } }
+      - name: Write connector checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "artifacts/MCPBridgeCEP.zxp").Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path (Get-Location) "artifacts/MCPBridgeCEP.zxp.sha256"), "$hash  MCPBridgeCEP.zxp`n")
+          Write-Host "MCPBridgeCEP.zxp SHA-256: $hash"
+      - name: Attach connector to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$env:RELEASE_TAG" "artifacts/MCPBridgeCEP.zxp" "artifacts/MCPBridgeCEP.zxp.sha256" --repo "$env:GITHUB_REPOSITORY" --clobber

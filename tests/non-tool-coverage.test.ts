@@ -94,15 +94,15 @@ function validEntry(): JsonRecord {
 
 async function importWithManifest(manifest: unknown): Promise<unknown> {
   vi.resetModules();
-  vi.doMock("node:module", () => ({
-    createRequire: () => () => manifest,
+  vi.doMock("../src/resources/adobe-uxp-coverage.json", () => ({
+    default: manifest,
   }));
   return import("../src/platform-capabilities.js");
 }
 
 describe("Adobe UXP manifest validation", () => {
   afterEach(() => {
-    vi.doUnmock("node:module");
+    vi.doUnmock("../src/resources/adobe-uxp-coverage.json");
     vi.resetModules();
   });
 

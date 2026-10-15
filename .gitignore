@@ -46,3 +46,6 @@ npm-debug.log*
 # Local browser verification artifacts
 .playwright-cli/
 output/playwright/
+
+# Single-file server build (scripts/build-single-file.mjs)
+dist-single/
