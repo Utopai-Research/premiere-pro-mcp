@@ -45,9 +45,6 @@ describe("canonical release metadata", () => {
     const cepManifest = read("cep-plugin/CSXS/manifest.xml");
     expect(cepManifest).toContain(`ExtensionBundleVersion="${release.version}"`);
     expect(cepManifest).toContain(`Version="${release.version}"`);
-    expect(read("cep-plugin/updater.cjs")).toContain(
-      `CURRENT_VERSION = "${release.version}"`,
-    );
     expect(read("cep-plugin/index.html")).toContain(`Version ${release.version}`);
   });
 

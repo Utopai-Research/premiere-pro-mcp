@@ -28,9 +28,40 @@ jobs:
         run: node scripts/verify-release-tag.mjs
       - name: Build and verify signed connector
         shell: pwsh
-        run: ./scripts/build-signed-cep.ps1
+        env:
+          # Optional repository secrets. When both are set, the ZXP is signed with
+          # that stable certificate, so every release carries the same signer.
+          ZXP_CERT_P12_BASE64: ${{ secrets.ZXP_CERT_P12_BASE64 }}
+          ZXP_CERT_PASSWORD: ${{ secrets.ZXP_CERT_PASSWORD }}
+        run: |
+          $params = @{}
+          if ($env:ZXP_CERT_P12_BASE64) {
+            if (-not $env:ZXP_CERT_PASSWORD) {
+              throw "ZXP_CERT_P12_BASE64 is set but ZXP_CERT_PASSWORD is not."
+            }
+            $certificatePath = Join-Path $env:RUNNER_TEMP "zxp-signing.p12"
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:ZXP_CERT_P12_BASE64))
+            $params.CertificatePath = $certificatePath
+            $params.CertificatePassword = $env:ZXP_CERT_PASSWORD
+            Write-Host "Signing the connector with the repository certificate."
+          } else {
+            Write-Host "::warning title=Unstable ZXP signer::ZXP_CERT_P12_BASE64 / ZXP_CERT_PASSWORD are not set; signing with a throwaway self-signed certificate generated for this build."
+          }
+          try {
+            ./scripts/build-signed-cep.ps1 @params
+          } finally {
+            if ($params.CertificatePath -and (Test-Path -LiteralPath $params.CertificatePath)) {
+              Remove-Item -LiteralPath $params.CertificatePath -Force
+            }
+          }
+      - name: Write connector checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "artifacts/MCPBridgeCEP.zxp").Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path (Get-Location) "artifacts/MCPBridgeCEP.zxp.sha256"), "$hash  MCPBridgeCEP.zxp`n")
+          Write-Host "MCPBridgeCEP.zxp SHA-256: $hash"
       - name: Attach connector to release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "artifacts/MCPBridgeCEP.zxp" --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" "artifacts/MCPBridgeCEP.zxp" "artifacts/MCPBridgeCEP.zxp.sha256" --clobber

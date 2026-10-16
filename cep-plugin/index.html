@@ -78,15 +78,12 @@
       </button>
     </div>
 
-    <section class="update-section" aria-live="polite">
+    <section class="update-section">
       <div class="update-copy">
-        <span class="section-label">MCP updates</span>
-        <strong id="updateTitle">Version 1.24.0</strong>
-        <span id="updateDetail">Checking the global MCP server and connector release…</span>
+        <span class="section-label">Connector</span>
+        <strong id="connectorVersion">Version 1.24.0</strong>
+        <span>This panel does not check for updates or make network requests.</span>
       </div>
-      <button id="btnUpdate" class="button button-update" onclick="handleUpdateClick()" type="button" aria-describedby="updateDetail" disabled>
-        Check again
-      </button>
     </section>
 
     <section class="activity-section">
@@ -102,7 +99,6 @@
   </main>
 
   <script src="CSInterface.js"></script>
-  <script src="updater.cjs"></script>
   <script src="bridge-directory-security.cjs"></script>
   <script src="main.js"></script>
 </body>
